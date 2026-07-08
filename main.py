@@ -1,59 +1,82 @@
-# api/main.py
+import io
+import base64
+import numpy as np
+import cv2
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
-from PIL import Image
-import io, base64, numpy as np
 
 app = FastAPI(title='CropShield API', version='1.0')
 
-# Enable CORS so your frontend can communicate with the backend
-app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Load your custom trained model weights
-MODEL = YOLO('model/best.pt')
+# Load your active model weights file
+MODEL = YOLO('api/model_v2.pt')
 
-def compute_severity(boxes, img_w, img_h):
-    # Severity = (sum of bounding box areas) / (total image area) * 100
-    area = sum((b[2]-b[0])*(b[3]-b[1]) for b in boxes)
-    return round(min(100.0, area/(img_w*img_h)*100), 1)
+from api.model.severity import compute_severity, severity_label
 
-def severity_label(pct):
-    if pct == 0:  return 'Healthy'
-    if pct < 10:  return 'Mild'
-    if pct < 30:  return 'Moderate'
-    if pct < 60:  return 'Severe'
-    return 'Critical'
-
-@app.post('/predict')
-async def predict(file: UploadFile = File(...)):
-    contents = await file.read()
-    img = Image.open(io.BytesIO(contents)).convert('RGB')
-    W, H = img.size
-
-    # Run image through YOLOv8
-    results   = MODEL(img)[0]
-    boxes     = [b.xyxy[0].tolist() for b in results.boxes]
-    classes   = [MODEL.names[int(b.cls)] for b in results.boxes]
-    confs     = [round(float(b.conf),3) for b in results.boxes]
-    severity  = compute_severity(boxes, W, H)
-
-    # Render annotated bounding boxes to send back to the user interface
-    ann_img = results.plot()  # numpy BGR image array
-    ann_pil = Image.fromarray(ann_img[:,:,::-1])  # Convert BGR to RGB
-    buf = io.BytesIO()
-    ann_pil.save(buf, format='JPEG', quality=85)
-    img_b64 = base64.b64encode(buf.getvalue()).decode()
-
+# 🔍 WORKAROUND: Forcing the home page to display your model classes directly on screen!
+@app.get("/")
+def read_root():
     return {
-        'diseases':      classes,
-        'confidences':   confs,
-        'severity_pct':  severity,
-        'severity_label': severity_label(severity),
-        'num_detections': len(boxes),
-        'annotated_image': f'data:image/jpeg;base64,{img_b64}'
+        "status": "Online",
+        "num_classes": len(MODEL.names),
+        "model_classes": MODEL.names
     }
 
-@app.get('/health')
-def health(): 
-    return {'status':'ok'}
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    contents = await file.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    if img is None:
+        return {"error": "Invalid image format received"}
+
+    img_h, img_w, _ = img.shape
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    results = MODEL.predict(img_rgb, conf=0.05, device='cpu')[0]
+
+    diseases = []
+    confidences = []
+    formatted_detections_for_severity = []
+
+    if hasattr(results, 'boxes') and len(results.boxes) > 0:
+        for box in results.boxes:
+            class_id = int(box.cls[0].item())
+            confidence_score = float(box.conf[0].item())
+            disease_name = MODEL.names.get(class_id, f"Class_{class_id}")
+            
+            diseases.append(disease_name)
+            confidences.append(confidence_score)
+
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            formatted_detections_for_severity.append({
+                'xyxy': [x1, y1, x2, y2]
+            })
+
+    if len(diseases) == 0:
+        severity_pct = 0.0
+        label_string = "Healthy"
+    else:
+        severity_pct = compute_severity(formatted_detections_for_severity, img_w, img_h)
+        label_string = severity_label(severity_pct)
+
+    annotated_img = results.plot()
+    annotated_bgr = cv2.cvtColor(annotated_img, cv2.COLOR_RGB2BGR) if len(results.boxes) > 0 else img
+    _, buffer = cv2.imencode('.jpg', annotated_bgr)
+    img_base64 = base64.b64encode(buffer).decode('utf-8')
+
+    return {
+        "severity_pct": float(round(severity_pct, 1)),
+        "severity_label": str(label_string),
+        "diseases": diseases,
+        "confidences": confidences,
+        "annotated_image": f"data:image/jpeg;base64,{img_base64}"
+    }
