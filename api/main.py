@@ -11,7 +11,7 @@ app = FastAPI(title='CropShield API', version='1.0')
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
 
 # Load your custom trained model weights
-MODEL = YOLO('best.pt')
+MODEL = YOLO('model/best.pt')
 
 def compute_severity(boxes, img_w, img_h):
     # Severity = (sum of bounding box areas) / (total image area) * 100
