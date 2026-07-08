@@ -20,7 +20,8 @@ app.add_middleware(
 )
 
 # Load your custom trained model weights
-MODEL = YOLO('model/best.pt')
+
+MODEL = YOLO('best.pt')
 
 @app.post('/predict')
 async def predict(file: UploadFile = File(...)):
