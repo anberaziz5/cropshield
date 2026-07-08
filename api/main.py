@@ -1,4 +1,5 @@
 # api/main.py
+from model.severity import compute_severity, severity_label
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
