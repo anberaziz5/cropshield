@@ -5,9 +5,11 @@ from ultralytics import YOLO
 from PIL import Image
 import io, base64, numpy as np
 
+# Import the severity logic from your model folder
+from model.severity import compute_severity, severity_label
+
 app = FastAPI(title='CropShield API', version='1.0')
 
-# Explicit, production-ready CORS handling to satisfy Hugging Face preflight security checks
 app.add_middleware(
     CORSMiddleware,
     allow_origins=['*'],
@@ -19,35 +21,37 @@ app.add_middleware(
 # Load your custom trained model weights
 MODEL = YOLO('model/best.pt')
 
-def compute_severity(boxes, img_w, img_h):
-    # Severity = (sum of bounding box areas) / (total image area) * 100
-    if not boxes:
-        return 0.0
-    area = sum((b[2]-b[0])*(b[3]-b[1]) for b in boxes)
-    return round(min(100.0, area/(img_w*img_h)*100), 1)
-
-def severity_label(pct):
-    if pct == 0:  return 'Healthy'
-    if pct < 10:  return 'Mild'
-    if pct < 30:  return 'Moderate'
-    if pct < 60:  return 'Severe'
-    return 'Critical'
-
 @app.post('/predict')
 async def predict(file: UploadFile = File(...)):
     contents = await file.read()
     img = Image.open(io.BytesIO(contents)).convert('RGB')
     W, H = img.size
 
-    # Run image through YOLOv8
-    results   = MODEL(img)[0]
+    # Run image through YOLOv8 with confidence threshold helper
+    results = MODEL(img, conf=0.10)[0]
     
-    # FIX: Extract coordinates correctly by flattening out the xyxy structure to lists
-    boxes     = [b.tolist() for b in results.boxes.xyxy]
-    classes   = [MODEL.names[int(b)] for b in results.boxes.cls]
-    confs     = [round(float(b), 3) for b in results.boxes.conf]
-    
-    severity  = compute_severity(boxes, W, H)
+    # 1. Format detections into the exact list of dicts your severity.py expects!
+    formatted_detections = []
+    if results.boxes is not None:
+        for box in results.boxes:
+            xyxy_list = box.xyxy[0].tolist()  # [x1, y1, x2, y2]
+            cls_idx = int(box.cls[0].item())
+            cls_name = MODEL.names[cls_idx]
+            conf_val = float(box.conf[0].item())
+            
+            formatted_detections.append({
+                'xyxy': xyxy_list,
+                'confidence': conf_val,
+                'cls_name': cls_name
+            })
+
+    # 2. Extract standard flat arrays for your frontend JSON response
+    classes = [d['cls_name'] for d in formatted_detections]
+    confs = [round(d['confidence'], 3) for d in formatted_detections]
+
+    # 3. Safely call your external model/severity.py functions
+    severity = compute_severity(formatted_detections, W, H)
+    label = severity_label(severity)
 
     # Render annotated bounding boxes to send back to the user interface
     ann_img = results.plot()  # numpy BGR image array
@@ -60,12 +64,11 @@ async def predict(file: UploadFile = File(...)):
         'diseases':      classes,
         'confidences':   confs,
         'severity_pct':  severity,
-        'severity_label': severity_label(severity),
-        'num_detections': len(boxes),
+        'severity_label': label,
+        'num_detections': len(formatted_detections),
         'annotated_image': f'data:image/jpeg;base64,{img_b64}'
     }
 
-# Explicit OPTIONS handler endpoint for preflight requests
 @app.options('/predict')
 async def preflight():
     return {'status': 'ok'}
