@@ -1,3 +1,4 @@
+# api/main.py
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
@@ -40,9 +41,12 @@ async def predict(file: UploadFile = File(...)):
 
     # Run image through YOLOv8
     results   = MODEL(img)[0]
-    boxes     = [b.xyxy[0].tolist() for b in results.boxes]
-    classes   = [MODEL.names[int(b.cls)] for b in results.boxes]
-    confs     = [round(float(b.conf),3) for b in results.boxes]
+    
+    # FIX: Extract coordinates correctly by flattening out the xyxy structure to lists
+    boxes     = [b.tolist() for b in results.boxes.xyxy]
+    classes   = [MODEL.names[int(b)] for b in results.boxes.cls]
+    confs     = [round(float(b), 3) for b in results.boxes.conf]
+    
     severity  = compute_severity(boxes, W, H)
 
     # Render annotated bounding boxes to send back to the user interface
