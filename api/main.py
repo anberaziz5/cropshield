@@ -2,6 +2,7 @@ import io
 import base64
 import numpy as np
 import cv2
+import json
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
@@ -16,8 +17,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# FIXED: Points exactly to your active 6.24 MB file name
+# Load the current 6.24 MB weight asset
 MODEL = YOLO('api/model_v2.pt')
+
+# ==========================================
+# 🔍 TEST 1 DIAGNOSTIC LOGS (Prints on boot)
+# ==========================================
+print("\n" + "="*50)
+print("CLASS NAMES:", MODEL.names)
+print("NUM CLASSES:", len(MODEL.names))
+print("="*50 + "\n")
 
 from api.model.severity import compute_severity, severity_label
 
@@ -35,8 +44,8 @@ async def predict(file: UploadFile = File(...)):
     # Convert BGR image data to RGB format before sending to YOLOv8
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    # Run inference on the corrected RGB color space with a low confidence threshold
-    results = MODEL.predict(img_rgb, conf=0.10, device='cpu')[0]
+    # Run inference with a low confidence threshold
+    results = MODEL.predict(img_rgb, conf=0.05, device='cpu')[0]
 
     diseases = []
     confidences = []
@@ -46,7 +55,9 @@ async def predict(file: UploadFile = File(...)):
         for box in results.boxes:
             class_id = int(box.cls[0].item())
             confidence_score = float(box.conf[0].item())
-            disease_name = MODEL.names.get(class_id, f"Unknown_Issue_{class_id}")
+            
+            # Map index IDs safely
+            disease_name = MODEL.names.get(class_id, f"Class_{class_id}")
             
             diseases.append(disease_name)
             confidences.append(confidence_score)
@@ -56,24 +67,24 @@ async def predict(file: UploadFile = File(...)):
                 'xyxy': [x1, y1, x2, y2]
             })
 
-    # Calculate metrics using your logic helpers
-    severity_pct = compute_severity(formatted_detections_for_severity, img_w, img_h)
-    
-    # Fallback: If objects are detected but area math is 0, give it a baseline visibility score
-    if len(diseases) > 0 and severity_pct == 0:
-        severity_pct = 12.5
+    # Clean execution math (no hardcoded fallback numbers)
+    if len(diseases) == 0:
+        severity_pct = 0.0
+        label_string = "Healthy"
+    else:
+        severity_pct = compute_severity(formatted_detections_for_severity, img_w, img_h)
+        label_string = severity_label(severity_pct)
 
-    label_string = severity_label(severity_pct)
+    print(f"INFERENCE LOG: Found -> {diseases}")
 
-    # Generate the output visualization layer
     annotated_img = results.plot()
-    annotated_bgr = cv2.cvtColor(annotated_img, cv2.COLOR_RGB2BGR)
+    annotated_bgr = cv2.cvtColor(annotated_img, cv2.COLOR_RGB2BGR) if len(results.boxes) > 0 else img
     _, buffer = cv2.imencode('.jpg', annotated_bgr)
     img_base64 = base64.b64encode(buffer).decode('utf-8')
 
     return {
-        "severity_pct": float(severity_pct),
-        "severity_label": label_string,
+        "severity_pct": float(round(severity_pct, 1)),
+        "severity_label": str(label_string),
         "diseases": diseases,
         "confidences": confidences,
         "annotated_image": f"data:image/jpeg;base64,{img_base64}"
