@@ -1,4 +1,3 @@
-# api/main.py
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
@@ -7,14 +6,22 @@ import io, base64, numpy as np
 
 app = FastAPI(title='CropShield API', version='1.0')
 
-# Enable CORS so your frontend can communicate with the backend
-app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
+# Explicit, production-ready CORS handling to satisfy Hugging Face preflight security checks
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['*'],
+    allow_credentials=True,
+    allow_methods=['GET', 'POST', 'OPTIONS'],
+    allow_headers=['*'],
+)
 
 # Load your custom trained model weights
 MODEL = YOLO('model/best.pt')
 
 def compute_severity(boxes, img_w, img_h):
     # Severity = (sum of bounding box areas) / (total image area) * 100
+    if not boxes:
+        return 0.0
     area = sum((b[2]-b[0])*(b[3]-b[1]) for b in boxes)
     return round(min(100.0, area/(img_w*img_h)*100), 1)
 
@@ -53,6 +60,11 @@ async def predict(file: UploadFile = File(...)):
         'num_detections': len(boxes),
         'annotated_image': f'data:image/jpeg;base64,{img_b64}'
     }
+
+# Explicit OPTIONS handler endpoint for preflight requests
+@app.options('/predict')
+async def preflight():
+    return {'status': 'ok'}
 
 @app.get('/health')
 def health(): 
