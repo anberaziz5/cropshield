@@ -9,7 +9,7 @@ from ultralytics import YOLO
 # 1. Initialize FastAPI app
 app = FastAPI(title='CropShield API', version='1.0')
 
-# 2. Enable CORS so your local frontend port 5175 can access it smoothly
+# 2. Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,15 +18,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 3. Load YOLO Model Weights (relative path from root container app folder)
+# 3. Load YOLO Model Weights
 MODEL = YOLO('api/best.pt')
 
-# 4. Corrected relative path import for your severity function helper
-from api.model.severity import compute_severity
+# 4. Import both function keys from your severity file
+from api.model.severity import compute_severity, severity_label
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
-    # Read image from upload payload
     contents = await file.read()
     nparr = np.frombuffer(contents, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -34,44 +33,49 @@ async def predict(file: UploadFile = File(...)):
     if img is None:
         return {"error": "Invalid image format received"}
 
-    # Run inference with a lower confidence threshold so it catches your custom classes
+    # Get image dimensions dynamically for your area formula
+    img_h, img_w, _ = img.shape
+
+    # Run inference with lower threshold (0.12) to catch custom classes
     results = MODEL.predict(img, conf=0.12, device='cpu')[0]
 
     diseases = []
     confidences = []
+    formatted_detections_for_severity = []
 
-    # Extract detected bounding box categories and confidence values
     if hasattr(results, 'boxes') and len(results.boxes) > 0:
         for box in results.boxes:
             class_id = int(box.cls[0].item())
             confidence_score = float(box.conf[0].item())
-            
-            # Map index IDs to human-readable names from your model dataset definitions
             disease_name = MODEL.names.get(class_id, f"Unknown_Issue_{class_id}")
             
             diseases.append(disease_name)
             confidences.append(confidence_score)
 
-    # Calculate severity using your module's logic helper function
-    try:
-        # Falls back to standard values if your compute_severity accepts different inputs
-        severity_pct, severity_label = compute_severity(diseases, confidences)
-    except Exception:
-        # Fallback safety validation layer if calculation experiences structural mismatches
-        severity_pct = 45 if len(diseases) > 0 else 0
-        if severity_pct == 0: severity_label = "Healthy"
-        elif severity_pct < 20: severity_label = "Mild"
-        elif severity_pct < 50: severity_label = "Moderate"
-        else: severity_label = "Severe"
+            # Extract raw xyxy coordinates for the severity function
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            formatted_detections_for_severity.append({
+                'xyxy': [x1, y1, x2, y2]
+            })
 
-    # Generate the annotated image canvas matrix with visible bounding boxes
+    # Calculate severity percentage and label using your exact functions!
+    severity_pct = compute_severity(formatted_detections_for_severity, img_w, img_h)
+    label_string = severity_label(severity_pct)
+
+    # If the model found diseases but they took up 0% of the area mathematically, 
+    # force it out of 'Healthy' so the UI reveals the name correctly.
+    if len(diseases) > 0 and severity_pct == 0:
+        severity_pct = 5.0
+        label_string = "Mild"
+
+    # Generate the annotated image matrix layer with bounding boxes drawn
     annotated_img = results.plot()
     _, buffer = cv2.imencode('.jpg', annotated_img)
     img_base64 = base64.b64encode(buffer).decode('utf-8')
 
     return {
-        "severity_pct": int(severity_pct),
-        "severity_label": severity_label,
+        "severity_pct": severity_pct,
+        "severity_label": label_string,
         "diseases": diseases,
         "confidences": confidences,
         "annotated_image": f"data:image/jpeg;base64,{img_base64}"
