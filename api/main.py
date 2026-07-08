@@ -23,54 +23,50 @@ app.add_middleware(
 
 MODEL = YOLO('api/best.pt')
 
-@app.post('/predict')
+@app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     contents = await file.read()
-    img = Image.open(io.BytesIO(contents)).convert('RGB')
-    W, H = img.size
-
-    # Run image through YOLOv8 with confidence threshold helper
-    results = MODEL(img, conf=0.10)[0]
+    nparr = np.frombuffer(contents, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
-    # 1. Format detections into the exact list of dicts your severity.py expects!
-    formatted_detections = []
-    if results.boxes is not None:
+    if img is None:
+        return {"error": "Invalid image format"}
+
+    # 1. Force a lower confidence threshold (0.12) so the custom weights register boxes
+    results = MODEL.predict(img, conf=0.12, device='cpu')[0]
+
+    diseases = []
+    confidences = []
+
+    # 2. Extract bounding boxes using explicit data types safely
+    if hasattr(results, 'boxes') and len(results.boxes) > 0:
         for box in results.boxes:
-            xyxy_list = box.xyxy[0].tolist()  # [x1, y1, x2, y2]
-            cls_idx = int(box.cls[0].item())
-            cls_name = MODEL.names[cls_idx]
-            conf_val = float(box.conf[0].item())
+            class_id = int(box.cls[0].item())
+            confidence_score = float(box.conf[0].item())
             
-            formatted_detections.append({
-                'xyxy': xyxy_list,
-                'confidence': conf_val,
-                'cls_name': cls_name
-            })
+            # Use names dictionary from your trained model file
+            disease_name = MODEL.names.get(class_id, f"Unknown_Issue_{class_id}")
+            
+            diseases.append(disease_name)
+            confidences.append(confidence_score)
 
-    # 2. Extract standard flat arrays for your frontend JSON response
-    classes = [d['cls_name'] for d in formatted_detections]
-    confs = [round(d['confidence'], 3) for d in formatted_detections]
+    # 3. Import and call your severity metrics logic file
+    from api.model.severity import calculate_severity
+    severity_pct, severity_label = calculate_severity(diseases, confidences)
 
-    # 3. Safely call your external model/severity.py functions
-    severity = compute_severity(formatted_detections, W, H)
-    label = severity_label(severity)
-
-    # Render annotated bounding boxes to send back to the user interface
-    ann_img = results.plot()  # numpy BGR image array
-    ann_pil = Image.fromarray(ann_img[:,:,::-1])  # Convert BGR to RGB
-    buf = io.BytesIO()
-    ann_pil.save(buf, format='JPEG', quality=85)
-    img_b64 = base64.b64encode(buf.getvalue()).decode()
+    # 4. Generate the annotated image matrix layer with custom overlays drawn
+    annotated_img = results.plot()
+    _, buffer = cv2.imencode('.jpg', annotated_img)
+    img_base64 = base64.b64encode(buffer).decode('utf-8')
 
     return {
-        'diseases':      classes,
-        'confidences':   confs,
-        'severity_pct':  severity,
-        'severity_label': label,
-        'num_detections': len(formatted_detections),
-        'annotated_image': f'data:image/jpeg;base64,{img_b64}'
+        "severity_pct": severity_pct,
+        "severity_label": severity_label,
+        "diseases": diseases,
+        "confidences": confidences,
+        "annotated_image": f"data:image/jpeg;base64,{img_base64}"
     }
-
+    
 @app.options('/predict')
 async def preflight():
     return {'status': 'ok'}
