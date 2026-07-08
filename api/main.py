@@ -16,7 +16,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODEL = YOLO('api/best.pt')
+# FIXED: Points exactly to your active 6.24 MB file name
+MODEL = YOLO('api/model_v2.pt')
 
 from api.model.severity import compute_severity, severity_label
 
@@ -31,10 +32,10 @@ async def predict(file: UploadFile = File(...)):
 
     img_h, img_w, _ = img.shape
 
-    # 1. FIX: Convert BGR image data to RGB format before sending to YOLOv8
+    # Convert BGR image data to RGB format before sending to YOLOv8
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    # 2. Run inference on the corrected RGB color space with a low confidence threshold
+    # Run inference on the corrected RGB color space with a low confidence threshold
     results = MODEL.predict(img_rgb, conf=0.10, device='cpu')[0]
 
     diseases = []
@@ -55,16 +56,16 @@ async def predict(file: UploadFile = File(...)):
                 'xyxy': [x1, y1, x2, y2]
             })
 
-    # 3. Calculate metrics using your logic helpers
+    # Calculate metrics using your logic helpers
     severity_pct = compute_severity(formatted_detections_for_severity, img_w, img_h)
     
-    # 4. Fallback: If objects are detected but area math is 0, give it a baseline visibility score
+    # Fallback: If objects are detected but area math is 0, give it a baseline visibility score
     if len(diseases) > 0 and severity_pct == 0:
         severity_pct = 12.5
 
     label_string = severity_label(severity_pct)
 
-    # 5. Generate the output visualization layer (using the original canvas to preserve colors)
+    # Generate the output visualization layer
     annotated_img = results.plot()
     annotated_bgr = cv2.cvtColor(annotated_img, cv2.COLOR_RGB2BGR)
     _, buffer = cv2.imencode('.jpg', annotated_bgr)
