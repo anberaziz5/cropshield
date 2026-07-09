@@ -41,7 +41,7 @@ async def predict(file: UploadFile = File(...)):
 
     img_h, img_w, _ = img.shape
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    results = MODEL.predict(img_rgb, conf=0.05, device='cpu')[0]
+    results = MODEL.predict(img_rgb, conf=0.25, device='cpu')[0]
 
     diseases = []
     confidences = []
