@@ -18,7 +18,7 @@ app.add_middleware(
 )
 
 # Load the current 6.24 MB weight asset
-MODEL = YOLO('api/model_v2.pt')
+MODEL = YOLO('api/best.pt')
 
 # ==========================================
 # 🔍 TEST 1 DIAGNOSTIC LOGS (Prints on boot)
