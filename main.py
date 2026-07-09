@@ -17,7 +17,7 @@ app.add_middleware(
 )
 
 # Load your active model weights file
-MODEL = YOLO('api/model_v2.pt')
+MODEL = YOLO('api/best.pt')
 
 from api.model.severity import compute_severity, severity_label
 
