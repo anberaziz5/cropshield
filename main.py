@@ -59,9 +59,10 @@ async def predict(file: UploadFile = File(...)):
             diseases.append(disease_name)
             confidences.append(confidence_score)
 
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
+           x1, y1, x2, y2 = box.xyxy[0].tolist()
             formatted_detections_for_severity.append({
-                'xyxy': [x1, y1, x2, y2]
+                'xyxy': [x1, y1, x2, y2],
+                'confidence': confidence_score
             })
 
     if len(diseases) == 0:

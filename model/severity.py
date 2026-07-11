@@ -4,9 +4,12 @@ import numpy as np
 Compute disease severity from YOLOv8 detection results.
 Severity = (sum of bounding box areas) / (total image area) * 100
 """
-def compute_severity(results, img_w, img_h):
-    if not results:
-        return 0.0
+def compute_severity(results, img_w=None, img_h=None):
+       if not results:
+           return 0.0
+       top_conf = max(det['confidence'] for det in results)
+       severity = round(top_conf * 100, 1)
+       return min(100.0, severity)
 
     mask = np.zeros((img_h, img_w), dtype=bool)
     for det in results:
