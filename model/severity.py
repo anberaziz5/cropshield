@@ -1,25 +1,23 @@
 # model/severity.py
+import numpy as np
 """
 Compute disease severity from YOLOv8 detection results.
 Severity = (sum of bounding box areas) / (total image area) * 100
 """
 
 def compute_severity(results, img_w, img_h):
-    """
-    results: list of dicts with keys: xyxy (x1,y1,x2,y2), conf, cls_name
-    Returns: severity percentage (0-100)
-    """
-    total_img_area = img_w * img_h
-    disease_area   = 0
+    if not results:
+        return 0.0
 
+    mask = np.zeros((img_h, img_w), dtype=bool)
     for det in results:
         x1, y1, x2, y2 = det['xyxy']
-        box_area = (x2-x1) * (y2-y1)
-        disease_area += box_area
+        x1, y1 = max(0, int(x1)), max(0, int(y1))
+        x2, y2 = min(img_w, int(x2)), min(img_h, int(y2))
+        mask[y1:y2, x1:x2] = True
 
-    # Cap at 100%
-    severity = min(100.0, (disease_area / total_img_area) * 100)
-    return round(severity, 1)
+    severity = (mask.sum() / (img_w * img_h)) * 100
+    return round(min(100.0, severity), 1)
 
 def severity_label(pct):
     if pct == 0:    return 'Healthy'
