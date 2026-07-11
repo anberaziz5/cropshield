@@ -17,7 +17,7 @@ app.add_middleware(
 )
 
 # Load your active model weights file
-MODEL = YOLO('api/model_v2.pt')
+MODEL = YOLO('api/best.pt')
 
 from api.model.severity import compute_severity, severity_label
 
@@ -41,8 +41,7 @@ async def predict(file: UploadFile = File(...)):
 
     img_h, img_w, _ = img.shape
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-   results = MODEL.predict(img_rgb, conf=0.30, iou=0.45, agnostic_nms=True, device='cpu')[0]
-
+    results = MODEL.predict(img_rgb, conf=0.30, iou=0.45, agnostic_nms=True, device='cpu')[0]
     diseases = []
     confidences = []
     formatted_detections_for_severity = []
