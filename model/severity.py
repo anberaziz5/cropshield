@@ -1,25 +1,20 @@
 # model/severity.py
-import numpy as np
 """
 Compute disease severity from YOLOv8 detection results.
-Severity = (sum of bounding box areas) / (total image area) * 100
+
+Severity is based on the model's own detection confidence for the
+diseased class(es) found in the image, expressed as a percentage.
+("Healthy" detections are filtered out before this function is ever
+called, so an empty `results` list always means a healthy leaf.)
 """
+
 def compute_severity(results, img_w=None, img_h=None):
-       if not results:
-           return 0.0
-       top_conf = max(det['confidence'] for det in results)
-       severity = round(top_conf * 100, 1)
-       return min(100.0, severity)
+    if not results:
+        return 0.0
+    top_conf = max(det['confidence'] for det in results)
+    severity = round(top_conf * 100, 1)
+    return min(100.0, severity)
 
-    mask = np.zeros((img_h, img_w), dtype=bool)
-    for det in results:
-        x1, y1, x2, y2 = det['xyxy']
-        x1, y1 = max(0, int(x1)), max(0, int(y1))
-        x2, y2 = min(img_w, int(x2)), min(img_h, int(y2))
-        mask[y1:y2, x1:x2] = True
-
-    severity = (mask.sum() / (img_w * img_h)) * 100
-    return round(min(100.0, severity), 1)
 
 def severity_label(pct):
     if pct == 0:    return 'Healthy'
